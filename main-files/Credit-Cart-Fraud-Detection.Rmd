@@ -1,0 +1,200 @@
+---
+title: "Detec-Credit-Card-Fraud"
+author: "Hoai Do"
+date: "11/26/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+The aim of this project is to build a classifier that can detect credit card fraudulent transactions. I will use a variety of machine learning algorithms that will be able to discern fraudulent from non-fraudulent one. 
+
+### I. Importing the Datasets
+This dataset contain transaction made by credit card.
+```{r, warning = FALSE, message = FALSE}
+library(ranger)
+library(caret)
+library(data.table)
+library(tidyverse)
+cc_data <- read.csv("creditcard.csv")
+cc_data <- data_frame(cc_data)
+```
+
+### II. EDA - Exploratory Data Analysis
+Using `dim()` and `glimpse()` function
+```{r,warning = FALSE, message = FALSE}
+dim(cc_data)
+glimpse(cc_data)
+```
+Summary the statistical values
+```{r,warning = FALSE, message = FALSE}
+summary(cc_data$Amount)
+```
+
+```{r,warning = FALSE, message = FALSE}
+names(cc_data)
+```
+Variance from the values of Amount column
+```{r,warning = FALSE, message = FALSE}
+var(cc_data$Amount)
+```
+
+Standard deviation from the values of Amount column 
+```{r,warning = FALSE, message = FALSE}
+sd(cc_data$Amount)
+```
+
+### II. Data Manipulation
+To make sure there are no extreme values in our dataset that might interfere with the functioning of our model, we need to deploy the `scale()` function which is known as feature standardization. It transforms the data to be structured according to a specified range.
+
+```{r,warning = FALSE, message = FALSE}
+cc_data$Amount <- scale(cc_data$Amount)
+scaled_cc <- cc_data[,-c(1)]
+head(scaled_cc)
+``` 
+
+### III. Data Modeling
+After we have standardized our entire dataset, we will split our dataset into training set as well as test set with a split ratio of 0.80. This means that 80% of our data will be attributed to the train_data whereas 20% will be attributed to the test data.
+```{r,warning = FALSE, message = FALSE}
+library(caTools)
+set.seed(123) # able to reproduce a particular sequence of random number value
+data_sample = sample.split(scaled_cc$Class,SplitRatio=0.80)
+train_data = subset(scaled_cc,data_sample==TRUE)
+test_data = subset(scaled_cc,data_sample==FALSE)
+dim(train_data)
+```
+```{r,warning = FALSE, message = FALSE}
+dim(test_data)
+```
+Using `glm()` function to generate linear regression
+```{r,warning = FALSE, message = FALSE}
+Logistic_Md <- glm(Class~., test_data, family = binomial())
+summary(Logistic_Md)
+```
+
+### IV. Fitting Logistic Regression Model
+A logistic regression is used for modeling the outcome probability of a class such as pass/fail, positive/negative and in our case – fraud/not fraud. 
+
+```{r,warning = FALSE, message = FALSE}
+plot(Logistic_Md)
+```
+
+In order to assess the performance of our model, I will delineate the ROC curve. ROC is also known as Receiver Optimistic Characteristics. For this, we will first import the `ROC package` and then plot our `ROC curve` to analyze its performance on the `test_data`
+
+```{r,warning = FALSE, message = FALSE}
+library(pROC)
+lr_predict <- predict(Logistic_Md,test_data, probability = TRUE)
+auc_gbm = roc(test_data$Class, lr_predict, plot = TRUE, col = "blue")
+```
+```{r,warning = FALSE, message = FALSE}
+print(auc_gbm)
+```
+
+### IV. Fitting Classification And Regression Trees (CART)
+I will now implement the decision tree model and plot it using the `rpart.plot()` function from `rpart.plot` package. And we can together specifically use the recursive parting to plot the decision tree.
+
+```{r,warning = FALSE, message = FALSE}
+library(rpart)
+if(!require("rpart.plot")) install.packages("rpart.plot")
+library(rpart.plot)
+library(ROSE)
+DTree_model <- rpart(Class ~ . , cc_data, method = 'class')
+predicted_val <- predict(DTree_model, cc_data, type = 'class')
+probability <- predict(DTree_model, cc_data, type = 'prob')
+rpart.plot(DTree_model)
+```
+
+CART algorithm is a classification algorithm for building a decision tree based on Gini’s impurity index as splitting criterion. CART is a binary tree build by splitting node into two child nodes repeatedly. The algorithm works repeatedly in three steps:
+1. Find each feature’s best split. For each feature with K different values there exist K-1 possible
+splits. Find the split, which maximizes the splitting criterion. The resulting set of splits contains
+best splits (one for each feature).
+2. Find the node’s best split. Among the best splits from Step i find the one, which maximizes the
+splitting criterion.
+3. Split the node using best node split from Step ii and repeat from Step i until stopping criterion is
+satisfied.
+
+```{r,warning = FALSE, message = FALSE}
+library(rpart)
+library(rpart.plot)
+library(yardstick)
+#rules from the generated tree
+rpart.rules(DTree_model)
+#prediction
+test.pred <- predict(DTree_model, newdata = test_data, method = "class")
+test.pred <- as.data.table(test.pred)
+target.class <- as.factor(ifelse(test.pred[,2] > 0.5, "1", "0"))
+#confusion matrix with 50% probability
+test_data$Class <- factor(test_data$Class)
+confusionMatrix(target.class, test_data$Class, positive = "1")
+#area under the curve(AUC)
+roc.curve(test_data$Class, target.class, plotit = TRUE)
+#plotting fully grown tree
+full.tree <- rpart(Class ~ ., data = train_data, method = "class", cp = 0)
+rpart.plot(full.tree)
+```
+
+```{r,warning = FALSE, message = FALSE}
+library(rattle)
+#performance of fully grown tree on training set 
+full.train <- predict(full.tree, newdata = train_data, method = "class")
+full.train <- as.data.table(full.train)
+full.class <- as.factor(ifelse(full.train[,2] > 0.5, "1", "0"))
+train_data$Class <- factor(train_data$Class)
+confusionMatrix(full.class, train_data$Class, positive = "1")
+#performance of fully grown tree on test set 
+full.test <- predict(full.tree, newdata = test_data, method = "class")
+full.test <- as.data.table(full.test)
+full.target <- as.factor(ifelse(full.test[,2] > 0.5, "1", "0"))
+confusionMatrix(full.target, test_data$Class, positive = "1")
+#pruning
+printcp(DTree_model)
+plotcp(DTree_model)
+ptree <- prune(DTree_model, cp= DTree_model$cptable[which.min(DTree_model$cptable[,"xerror"]),"CP"])
+fancyRpartPlot(ptree, uniform=TRUE, main="Pruned Classification Tree")
+```
+
+
+### V. Fitting Gradient Boosting (GBM)
+GBM is used to perform classification and regression tasks. This model comprises of several underlying ensemble models like weak decision trees. These decision trees combine together to form a strong model of gradient boosting.
+
+```{r,warning = FALSE, message = FALSE}
+if(!require("gbm")) install.packages("gbm")
+library(gbm, quietly=TRUE)
+
+# Get the time to train the GBM model
+system.time(
+       model_gbm <- gbm(Class ~ .
+               , distribution = "bernoulli"
+               , data = rbind(train_data, test_data)
+               , n.trees = 500
+               , interaction.depth = 3
+               , n.minobsinnode = 100
+               , shrinkage = 0.01
+               , bag.fraction = 0.5
+               , train.fraction = nrow(train_data) / (nrow(train_data) + nrow(test_data))
+)
+)
+```
+```{r,warning = FALSE, message = FALSE}
+# Determine best iteration based on test data
+gbm.iter = gbm.perf(model_gbm, method = "test")
+```
+```{r,warning = FALSE, message = FALSE}
+model.influence = relative.influence(model_gbm, n.trees = gbm.iter, sort. = TRUE)
+#Plot the gbm model
+plot(model_gbm)
+```
+
+```{r,warning = FALSE, message = FALSE}
+library(pROC)
+# Plot and calculate AUC on test data
+gbm_test = predict(model_gbm, newdata = test_data, n.trees = gbm.iter)
+gbm_auc = roc(test_data$Class, gbm_test, plot = TRUE, col = "red")
+```
+
+```{r,warning = FALSE, message = FALSE}
+print(gbm_auc)
+```
+
+
